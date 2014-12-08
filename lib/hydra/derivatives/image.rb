@@ -3,7 +3,7 @@ module Hydra
   module Derivatives
     class Image < Processor
       def process
-        directives.each do |name, args| 
+        directives.each do |name, args|
           opts = args.kind_of?(Hash) ? args : {size: args}
           format = opts.fetch(:format, 'png')
           output_datastream_name = opts.fetch(:datastream, output_datastream_id(name))
@@ -39,7 +39,7 @@ module Hydra
         output_datastream.content = stream
       end
 
-      # Override this method if you want a different transformer, or need to load the 
+      # Override this method if you want a different transformer, or need to load the
       # raw image from a different source (e.g.  external datastream)
       def load_image_transformer
         MiniMagick::Image.read(source_datastream.content)
