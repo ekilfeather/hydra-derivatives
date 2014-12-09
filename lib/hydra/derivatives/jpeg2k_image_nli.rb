@@ -55,8 +55,10 @@ module Hydra
 
         if (size / target_compression_ratio < min_output_size_bytes)
           # Find the compression ratio necessary to ensure the minimum output size
-          compression_ratio = (size/min_output_size_bytes).round
+          target_compression_ratio = (size/min_output_size_bytes).round
         end
+
+        return target_compression_ratio
       end
 
       def get_bit_depth(colorspace, size, width, height, depth_per_channel)
