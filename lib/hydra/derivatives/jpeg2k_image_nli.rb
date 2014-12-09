@@ -8,99 +8,36 @@ module Hydra
 
       def process
         image = MiniMagick::Image.read(source_datastream.content)
-        quality = image['%[channels]'] == 'gray' ? 'gray' : 'color'
+        colorspace = image['%[colorspace]'].downcase == 'gray' ? 'gray' : 'color'
         size = image.size
+        depth_per_channel = image['%[depth]']
+        bit_depth = get_bit_depth(colorspace, size, image.width, image.height, depth_per_channel)
         directives.each do |name, args|
           long_dim = self.class.long_dim(image)
+          # Could set file_path to the actually location in the ingested nfs mount,
+          # to avoid the write to /tmp
           file_path = self.class.tmp_file('.tif')
-          to_srgb = args.fetch(:to_srgb, true)
-          if args[:resize] || to_srgb
-            preprocess(image, resize: args[:resize], to_srgb: to_srgb, src_quality: quality)
-          end
           image.write file_path
-          recipe = self.class.kdu_compress_recipe(args, quality, long_dim, size)
+          recipe = calculate_nli_recipe(args, colorspace, long_dim, size, bit_depth )
           output_datastream_name = args[:datastream] || output_datastream_id(name)
           encode_datastream(output_datastream_name, recipe, file_path: file_path)
           File.unlink(file_path) unless file_path.nil?
         end
       end
 
-      def encode_datastream(dest_dsid, recipe, opts={})
-        output_file = self.class.tmp_file('.jp2')
-        if opts[:file_path]
-          self.class.encode(opts[:file_path], recipe, output_file)
-        else
-          source_datastream.to_tempfile do |f|
-            self.class.encode(f.path, recipe, output_file)
-          end
-        end
-        out_file = File.open(output_file, "rb")
-        out_datastream = output_datastream(dest_dsid)
-        out_datastream.content = out_file
-        out_datastream.mimeType = 'image/jp2'
-        #object.add_file_datastream(out_file.read, dsid: dest_dsid, mimeType: 'image/jp2')
-        File.unlink(output_file)
-      end
-
       protected
-      def preprocess(image, opts={})
-        # resize: <geometry>, to_srgb: <bool>, src_quality: 'color'|'gray'
-        image.combine_options do |c|
-          c.resize(opts[:resize]) if opts[:resize]
-          c.profile self.class.srgb_profile_path if opts[:src_quality] == 'color' && opts[:to_srgb]
-        end
-        image
-      end
-
-      def self.encode(path, recipe, output_file)
-        kdu_compress = Hydra::Derivatives.kdu_compress_path
-        execute "#{kdu_compress} -i #{path} -o #{output_file} #{recipe}"
-      end
-
-      def self.srgb_profile_path
-        File.join [
-          File.expand_path('../../../', __FILE__),
-          'color_profiles',
-          'sRGB_IEC61966-2-1_no_black_scaling.icc'
-        ]
-      end
-
-      def self.tmp_file(ext)
-        Dir::Tmpname.create(['sufia', ext], Hydra::Derivatives.temp_file_base){}
-      end
-
-      def self.long_dim(image)
-        [image[:width], image[:height]].max
-      end
-
-      def self.kdu_compress_recipe(args, quality, long_dim, size)
-        if args[:recipe].is_a? Symbol
-          recipe = [args[:recipe].to_s, quality].join('_')
-          if Hydra::Derivatives.kdu_compress_recipes.has_key? recipe
-            return Hydra::Derivatives.kdu_compress_recipes[recipe]
-          else
-            Logger.warn "No JP2 recipe for :#{args[:recipe].to_s} ('#{recipe}') found in configuration. Using best guess."
-            return Hydra::Derivatives::Jpeg2kImage.calculate_recipe(args,quality,long_dim, size)
-          end
-        elsif args[:recipe].is_a? String
-          return args[:recipe]
-        else
-          return Hydra::Derivatives::Jpeg2kImage.calculate_recipe(args, quality, long_dim, size)
-        end
-      end
-
-      def self.calculate_recipe(args, quality, long_dim, size)
+      def calculate_nli_recipe(args, colorspace, long_dim, size, bit_depth)
         levels_arg = args.fetch(:levels, Hydra::Derivatives::Jpeg2kImage.level_count_for_size(long_dim))
         layer_count = args.fetch(:layers, 8)
         target_compression_ratio = args.fetch(:compression, 10)
-        compression_ratio = Hydra::Derivatives::Jpeg2kImage.final_compression_ratio(size, target_compression_ratio)
-        rates_arg = Hydra::Derivatives::Jpeg2kImage.layer_rates(layer_count, compression_ratio)
+        compression_ratio = final_compression_ratio(size, target_compression_ratio)
+        rates_arg = bit_depth.to_f/compression_ratio
 
         %Q{-rate #{rates_arg}
           -num_threads 4
           -no_weights
           Clayers=#{layer_count}
-          Clevels=7
+          Clevels=#{levels_arg}
           "Cprecincts={256,256},{256,256},{256,256},{128,128},{128,128},{64,64},{64,64},{32,32},{16,16}"
           "Cblk={64,64}"
           Cuse_sop=yes
@@ -110,7 +47,7 @@ module Hydra
         }.gsub(/\s+/, " ").strip
       end
 
-      def self.final_compression_ratio(size, target_compression_ratio)
+      def final_compression_ratio(size, target_compression_ratio)
         size = size.to_f
         target_compression_ratio = target_compression_ratio.to_f
         min_output_size_megabytes = args.fetch(:min_output_size, 3).to_f
@@ -122,15 +59,23 @@ module Hydra
         end
       end
 
-      def self.layer_rates(layer_count,compression_numerator)
-        #e.g. if compression_numerator = 10 then compression is 10:1
-        rates = []
-        cmp = 24.0/compression_numerator
-        layer_count.times do
-          rates << cmp
-          cmp = (cmp/1.618).round(8)
+      def get_bit_depth(colorspace, size, width, height, depth_per_channel)
+        # This function checks that the image filesize corresponds to number of channels
+        # implied by the color space reported by ImageMagick. This is necessary because ImageMagick
+        # bases its colorspace value on the actual colours in the image rather than
+        # the channel mode (e.g. Greyscale, RGB), with the result that a file which is Greyscale but
+        # saved as RGB in Gimp/Photoshop is identified by ImageMagick as Greyscale although its filesize
+        # reflects the RGB mode
+        if colorspace == "gray"
+          predicted_approx_byte_size = width.to_i * height.to_i * (depth_per_channel.to_i/8)
+          if  predicted_approx_byte_size * 2 < size
+            return 24 * (depth_per_channel.to_i/8)
+          else
+            return 8 * (depth_per_channel.to_i/8)
+          end
+        else
+          return 24 * (depth_per_channel.to_i/8)
         end
-        rates.map(&:to_s ).join(',')
       end
 
     end
