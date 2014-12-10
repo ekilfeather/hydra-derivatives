@@ -16,6 +16,7 @@ module Hydra
     autoload :ExtractMetadata
     autoload :ShellBasedProcessor
     autoload :Jpeg2kImage
+    autoload :Jpeg2kImageNli
     autoload :Logger
 
     def self.config
