@@ -33,8 +33,10 @@ module Hydra
         min_output_size_megabytes = args.fetch(:min_output_size, 3)
         compression_ratio = final_compression_ratio(size, target_compression_ratio, min_output_size_megabytes)
         rates_arg = bit_depth.to_f/compression_ratio
+        jp2_space_arg = colorspace == 'gray' ? 'sLUM' : 'sRGB'
 
         %Q{-rate #{rates_arg}
+          -jp2_space #{jp2_space_arg}
           -num_threads 4
           -no_weights
           Clayers=#{layer_count}
