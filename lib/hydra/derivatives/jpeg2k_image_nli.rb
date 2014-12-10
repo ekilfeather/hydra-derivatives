@@ -30,7 +30,8 @@ module Hydra
         levels_arg = args.fetch(:levels, Hydra::Derivatives::Jpeg2kImage.level_count_for_size(long_dim))
         layer_count = args.fetch(:layers, 8)
         target_compression_ratio = args.fetch(:compression, 10)
-        compression_ratio = final_compression_ratio(size, target_compression_ratio)
+        min_output_size_megabytes = args.fetch(:min_output_size, 3)
+        compression_ratio = final_compression_ratio(size, target_compression_ratio, min_output_size_megabytes)
         rates_arg = bit_depth.to_f/compression_ratio
 
         %Q{-rate #{rates_arg}
@@ -47,11 +48,10 @@ module Hydra
         }.gsub(/\s+/, " ").strip
       end
 
-      def final_compression_ratio(size, target_compression_ratio)
+      def final_compression_ratio(size, target_compression_ratio, min_output_size_megabytes)
         size = size.to_f
         target_compression_ratio = target_compression_ratio.to_f
-        min_output_size_megabytes = args.fetch(:min_output_size, 3).to_f
-        min_output_size_bytes = min_output_size_megabytes * 1048576
+        min_output_size_bytes = min_output_size_megabytes.to_f * 1048576
 
         if (size / target_compression_ratio < min_output_size_bytes)
           # Find the compression ratio necessary to ensure the minimum output size
