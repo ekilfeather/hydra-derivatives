@@ -7,12 +7,12 @@ module Hydra
     class Jpeg2kImageNli < Jpeg2kImage
 
       def process
-        image = MiniMagick::Image.read(source_datastream.content)
-        colorspace = image['%[colorspace]'].downcase == 'gray' ? 'gray' : 'color'
-        size = image.size
-        depth_per_channel = image['%[depth]']
-        bit_depth = get_bit_depth(colorspace, size, image.width, image.height, depth_per_channel)
         directives.each do |name, args|
+          image = MiniMagick::Image.read(source_datastream.content)
+          colorspace = image['%[colorspace]'].downcase == 'gray' ? 'gray' : 'color'
+          size = image.size
+          depth_per_channel = image['%[depth]']
+          bit_depth = get_bit_depth(colorspace, size, image.width, image.height, depth_per_channel)
           long_dim = self.class.long_dim(image)
           # Could set file_path to the actually location in the ingested nfs mount,
           # to avoid the write to /tmp
