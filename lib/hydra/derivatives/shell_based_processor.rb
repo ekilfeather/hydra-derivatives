@@ -1,16 +1,13 @@
 # An abstract class for asyncronous jobs that transcode files using FFMpeg
 
 require 'tmpdir'
-require 'open3'
+require 'posix-spawn'
 
 module Hydra
   module Derivatives
     module ShellBasedProcessor
       extend ActiveSupport::Concern
 
-      included do
-        extend Open3
-      end
 
       def process
         directives.each do |name, args|
@@ -39,15 +36,17 @@ module Hydra
 
       module ClassMethods
         def execute(command)
-          stdin, stdout, stderr, wait_thr = popen3(command)
-          stdin.close
-          out = stdout.read
-          stdout.close
-          err = stderr.read
-          stderr.close
-          raise "Unable to execute command \"#{command}\"\n#{err}" unless wait_thr.value.success?
+          stdout, stderr, status = execute_posix_spawn(*command)
+          raise "Unable to execute command \"#{command}\"\n#{stderr}" unless status.exitstatus.success?
         end
       end
+
+    def execute_posix_spawn(*command)
+      pid, stdin, stdout, stderr = POSIX::Spawn.popen4(*command)
+      Process.waitpid(pid)
+
+      [stdout.read, stderr.read, $?]
+    end
     end
   end
 end
