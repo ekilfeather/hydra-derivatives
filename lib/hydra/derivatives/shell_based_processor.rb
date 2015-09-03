@@ -39,14 +39,14 @@ module Hydra
           stdout, stderr, status = execute_posix_spawn(*command)
           raise "Unable to execute command \"#{command}\"\n#{stderr}" unless status.exitstatus.success?
         end
+
+        def execute_posix_spawn(*command)
+          pid, stdin, stdout, stderr = POSIX::Spawn.popen4(*command)
+          Process.waitpid(pid)
+
+          [stdout.read, stderr.read, $?]
+        end
       end
-
-    def execute_posix_spawn(*command)
-      pid, stdin, stdout, stderr = POSIX::Spawn.popen4(*command)
-      Process.waitpid(pid)
-
-      [stdout.read, stderr.read, $?]
-    end
     end
   end
 end
