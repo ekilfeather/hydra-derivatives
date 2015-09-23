@@ -6,8 +6,9 @@ module Hydra
         directives.each do |name, args|
           opts = args.kind_of?(Hash) ? args : {size: args}
           format = opts.fetch(:format, 'png')
+          quality = opts.fetch(:quality, nil)
           output_datastream_name = opts.fetch(:datastream, output_datastream_id(name))
-          create_resized_image(output_datastream(output_datastream_name), opts[:size], format)
+          create_resized_image(output_datastream(output_datastream_name), opts[:size], format, quality)
         end
       end
 
