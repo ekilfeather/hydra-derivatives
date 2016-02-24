@@ -7,7 +7,7 @@ module Hydra
     class Jpeg2kImageNli < Jpeg2kImage
 
       def process
-        image = MiniMagick::Image.read(source_datastream.content)
+        image = MiniMagick::Image.read(source_file.content)
         colorspace = image['%[colorspace]'].downcase == 'gray' ? 'gray' : 'color'
         size = image.size
         depth_per_channel = image['%[depth]']
@@ -19,8 +19,8 @@ module Hydra
           file_path = self.class.tmp_file('.tif')
           image.write file_path
           recipe = calculate_nli_recipe(args, colorspace, long_dim, size, bit_depth )
-          output_datastream_name = args[:datastream] || output_datastream_id(name)
-          encode_datastream(output_datastream_name, recipe, file_path: file_path)
+          output_file_name = args[:datastream] || output_file_id(name)
+          encode_file(output_file_name, recipe, file_path: file_path)
           File.unlink(file_path) unless file_path.nil?
         end
       end
@@ -85,3 +85,4 @@ module Hydra
     end
   end
 end
+

@@ -2,8 +2,9 @@
 
 require "bundler/gem_tasks"
 
-APP_ROOT="." # for jettywrapper
 require 'jettywrapper'
+Jettywrapper.hydra_jetty_version = "v8.1.0"
+
 # Dir.glob('tasks/*.rake').each { |r| import r }
 
 require 'rspec/core/rake_task'

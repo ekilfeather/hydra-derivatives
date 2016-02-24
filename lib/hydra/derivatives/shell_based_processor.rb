@@ -1,50 +1,78 @@
 # An abstract class for asyncronous jobs that transcode files using FFMpeg
 
 require 'tmpdir'
-require 'posix-spawn'
+require 'open3'
 
 module Hydra
   module Derivatives
     module ShellBasedProcessor
       extend ActiveSupport::Concern
 
+      included do
+        class_attribute :timeout
+        extend Open3
+      end
 
       def process
         directives.each do |name, args|
           format = args[:format]
           raise ArgumentError, "You must provide the :format you want to transcode into. You provided #{args}" unless format
           # TODO if the source is in the correct format, we could just copy it and skip transcoding.
-          output_datastream_name = args[:datastream] || output_datastream_id(name)
-          encode_datastream(output_datastream_name, format, new_mime_type(format), options_for(format))
+          output_file_name = args[:datastream] || output_file_id(name)
+          encode_file(output_file_name, format, new_mime_type(format), options_for(format))
         end
       end
 
       # override this method in subclass if you want to provide specific options.
+      # returns a hash of options that the specific processors use
       def options_for(format)
+        {}
       end
 
-      def encode_datastream(dest_dsid, file_suffix, mime_type, options = '')
+      def encode_file(destination_name, file_suffix, mime_type, options)
         out_file = nil
         output_file = Dir::Tmpname.create(['sufia', ".#{file_suffix}"], Hydra::Derivatives.temp_file_base){}
-        source_datastream.to_tempfile do |f|
+        Hydra::Derivatives::TempfileService.create(source_file) do |f|
           self.class.encode(f.path, options, output_file)
         end
         out_file = File.open(output_file, "rb")
-        object.add_file_datastream(out_file.read, :dsid=>dest_dsid, :mimeType=>mime_type)
+        output_file_service.call(object, out_file.read, destination_name, mime_type: mime_type)
         File.unlink(output_file)
       end
 
       module ClassMethods
+
         def execute(command)
-          stdout, stderr, status = execute_posix_spawn(*command)
-          raise "Unable to execute command \"#{command}\"\n#{stderr}" unless status.exitstatus == 0
+          context = {}
+          if timeout
+            execute_with_timeout(timeout, command, context)
+          else
+            execute_without_timeout(command, context)
+          end
         end
 
-        def execute_posix_spawn(*command)
-          pid, stdin, stdout, stderr = POSIX::Spawn.popen4(*command)
-          Process.waitpid(pid)
+        def execute_with_timeout(timeout, command, context)
+          begin
+            status = Timeout::timeout(timeout) do
+              execute_without_timeout(command, context)
+            end
+          rescue Timeout::Error => ex
+            pid = context[:pid]
+            Process.kill("KILL", pid)
+            raise Hydra::Derivatives::TimeoutError, "Unable to execute command \"#{command}\"\nThe command took longer than #{timeout} seconds to execute"
+          end
 
-          [stdout.read, stderr.read, $?]
+        end
+
+        def execute_without_timeout(command, context)
+          stdin, stdout, stderr, wait_thr = popen3(command)
+          context[:pid] = wait_thr[:pid]
+          stdin.close
+          out = stdout.read
+          stdout.close
+          err = stderr.read
+          stderr.close
+          raise "Unable to execute command \"#{command}\"\n#{err}" unless wait_thr.value.success?
         end
       end
     end

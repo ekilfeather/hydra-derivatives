@@ -1,10 +1,12 @@
 require 'active_fedora'
 require 'hydra/derivatives/railtie' if defined?(Rails)
-
+require 'deprecation'
 module Hydra
   module Derivatives
     extend ActiveSupport::Concern
     extend ActiveSupport::Autoload
+    extend Deprecation
+    self.deprecation_horizon = "hydra-derivatives 1.0"
 
     autoload :Processor
     autoload :Image
@@ -18,6 +20,17 @@ module Hydra
     autoload :Jpeg2kImage
     autoload :Jpeg2kImageNli
     autoload :Logger
+    autoload :TempfileService
+
+    # services
+    autoload :RetrieveSourceFileService,         'hydra/derivatives/services/retrieve_source_file_service'
+    autoload :PersistOutputFileService,          'hydra/derivatives/services/persist_output_file_service'
+    autoload :PersistBasicContainedOutputFileService, 'hydra/derivatives/services/persist_basic_contained_output_file_service'
+    autoload :TempfileService,                   'hydra/derivatives/services/tempfile_service'
+
+
+    # Raised if the timout elapses
+    class TimeoutError < ::Timeout::Error; end
 
     def self.config
       @config ||= reset_config!
@@ -28,7 +41,7 @@ module Hydra
     end
 
     [:ffmpeg_path, :libreoffice_path, :temp_file_base, :fits_path, :kdu_compress_path,
-      :kdu_compress_recipes, :enable_ffmpeg].each do |method|
+      :kdu_compress_recipes, :enable_ffmpeg, :source_file_service, :output_file_service].each do |method|
       module_eval <<-RUBY
         def self.#{method.to_s}
           config.#{method.to_s}
@@ -59,28 +72,57 @@ module Hydra
       end
     end
 
-    # Create derivatives from a datastream according to transformation directives
-    # @param datastream_name
+    # Create derivatives from a file according to transformation directives
+    # @param file_name
     # @param [Hash] transform_directives - each key corresponds to a desired derivative.  Associated values vary according to processor being used.
     # @param [Hash] opts for specifying things like choice of :processor (processor defaults to :image)
+    # @option opts [Symbol] :processor (:image) Processor to use
+    # @option opts [Class] :source_file_service (Hydra::Derivatives::RetrieveSourceFileService) service to use when persisting generated derivatives.  The default for this can be set in your config file.
+    # @option opts [Class] :output_file_service (Hydra::Derivatives::PersistIndirectlyContainedOutputFile) service to use when retrieving the source.  The default for this can be set in your config file.
     #
     # @example This will create content_thumb
-    #   transform_datastream :content, { :thumb => "100x100>" }
+    #   transform_file :content, { :thumb => "100x100>" }
     #
-    # @example Specify the dsid for the output datastream
-    #   transform_datastream :content, { :thumb => {size: "200x300>", datastream: 'thumbnail'} }
+    # @example Specify the dsid for the output file
+    #   transform_file :content, { :thumb => {size: "200x300>", datastream: 'thumbnail'} }
     #
     # @example Create multiple derivatives with one set of directives.  This will create content_thumb and content_medium
-    #   transform_datastream :content, { :medium => "300x300>", :thumb => "100x100>" }
+    #   transform_file :content, { :medium => "300x300>", :thumb => "100x100>" }
     #
     # @example Specify which processor you want to use (defaults to :image)
-    #   transform_datastream :content, { :mp3 => {format: 'mp3'}, :ogg => {format: 'ogg'} }, processor: :audio
-    #   transform_datastream :content, { :mp4 => {format: 'mp4'}, :webm => {format: 'webm'} }, processor: :video
+    #   transform_file :content, { :mp3 => {format: 'mp3'}, :ogg => {format: 'ogg'} }, processor: :audio
+    #   transform_file :content, { :mp4 => {format: 'mp4'}, :webm => {format: 'webm'} }, processor: :video
     #
-    def transform_datastream(datastream_name, transform_directives, opts={})
-      processor = opts[:processor] ? opts[:processor] : :image
-      "Hydra::Derivatives::#{processor.to_s.classify}".constantize.new(self, datastream_name, transform_directives).process
+    # @example Specify an output file service to use when persisting generated derivatives
+    #   obj.transform_file :content, { mp4: { format: 'mp4' } }, processor: :video, output_file_service: My::System::PersistOutputFileToTapeStorage
+    #
+    # @example Specify a source file service to use when retrieving the source
+    #   obj.transform_file :content, { mp4: { format: 'mp4' } }, processor: :video, source_file_service: My::System::PersistOutputFileToTapeStorage
+
+    def transform_file(file_name, transform_directives, opts={})
+      initialize_processor(file_name, transform_directives, opts).process
     end
+
+    def processor_class(processor)
+      case processor
+        when :video
+          Hydra::Derivatives::Video::Processor
+        else
+          constantize_processor(processor.to_s)
+        end
+    end
+
+    def constantize_processor(processor)
+      "Hydra::Derivatives::#{processor.classify}".constantize
+    rescue NameError
+      processor.classify.constantize
+    end
+
+    def transform_datastream(file_name, transform_directives, opts={})
+      transform_file(file_name, transform_directives, opts={})
+    end
+    deprecation_deprecate :transform_datastream
+
 
     module ClassMethods
       # Register transformation schemes for generating derivatives.
@@ -90,9 +132,9 @@ module Hydra
       #    makes_derivatives do |obj|
       #      case obj.mime_type
       #      when 'application/pdf'
-      #        obj.transform_datastream :content, { :thumb => "100x100>" }
+      #        obj.transform_file :content, { :thumb => "100x100>" }
       #      when 'audio/wav'
-      #        obj.transform_datastream :content, { :mp3 => {format: 'mp3'}, :ogg => {format: 'ogg'} }, processor: :audio
+      #        obj.transform_file :content, { :mp3 => {format: 'mp3'}, :ogg => {format: 'ogg'} }, processor: :audio
       #
       # @example Define transformation scheme using a callback method
       #      makes_derivatives :generate_image_derivatives
@@ -100,7 +142,7 @@ module Hydra
       #      def generate_image_derivatives
       #        case mime_type
       #        when 'image/png', 'image/jpg'
-      #          transform_datastream :content, { :medium => "300x300>", :thumb => "100x100>" }
+      #          transform_file :content, { :medium => "300x300>", :thumb => "100x100>" }
       #        end
       #      end
       def makes_derivatives(*callback_method_names, &block)
@@ -113,5 +155,11 @@ module Hydra
         end
       end
     end
+
+    private
+    def initialize_processor(file_name, transform_directives, opts={})
+      processor_class(opts[:processor] || :image).new(self, file_name, transform_directives, opts)
+    end
+
   end
 end

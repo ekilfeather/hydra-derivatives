@@ -9,24 +9,27 @@ module Hydra
         execute "#{Hydra::Derivatives.libreoffice_path} --invisible --headless --convert-to #{format} --outdir #{outdir} #{path}"
       end
 
-      def encode_datastream(dest_dsid, file_suffix, mime_type, options = '')
-        output_file = Dir::Tmpname.create(["#{object.id}-content.", ".#{file_suffix}"], Hydra::Derivatives.temp_file_base){}
+      def encode_file(destination_name, file_suffix, mime_type, options = { })
         new_output = ''
-        source_datastream.to_tempfile do |f|
+        Hydra::Derivatives::TempfileService.create(source_file) do |f|
           if mime_type == 'image/jpeg'
             temp_file = File.join(Hydra::Derivatives.temp_file_base, [File.basename(f.path).sub(File.extname(f.path), ''), 'pdf'].join('.'))
             new_output = File.join(Hydra::Derivatives.temp_file_base, [File.basename(temp_file).sub(File.extname(temp_file), ''), file_suffix].join('.'))
             self.class.encode(f.path, options, temp_file)
-            self.class.encode(temp_file, options, output_file)
+            self.class.encode(temp_file, options, output_file(file_suffix))
             File.unlink(temp_file)
           else
-            self.class.encode(f.path, options, output_file)
+            self.class.encode(f.path, options, output_file(file_suffix))
             new_output = File.join(Hydra::Derivatives.temp_file_base, [File.basename(f.path).sub(File.extname(f.path), ''), file_suffix].join('.'))
           end
         end
         out_file = File.open(new_output, "rb")
-        object.add_file_datastream(out_file.read, dsid: dest_dsid, mimeType: mime_type)
+        output_file_service.call(object, out_file.read, destination_name, mime_type: mime_type)
         File.unlink(out_file)
+      end
+
+      def output_file(file_suffix)
+        Dir::Tmpname.create(["#{object.id.gsub('/', '_')}-content.", ".#{file_suffix}"], Hydra::Derivatives.temp_file_base){}
       end
 
       def new_mime_type(format)

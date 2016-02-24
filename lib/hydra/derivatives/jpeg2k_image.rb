@@ -8,7 +8,7 @@ module Hydra
       include ShellBasedProcessor
 
       def process
-        image = MiniMagick::Image.read(source_datastream.content)
+        image = MiniMagick::Image.read(source_file.content)
         quality = image['%[channels]'] == 'gray' ? 'gray' : 'color'
         directives.each do |name, args|
           long_dim = self.class.long_dim(image)
@@ -19,26 +19,25 @@ module Hydra
           end
           image.write file_path
           recipe = self.class.kdu_compress_recipe(args, quality, long_dim)
-          output_datastream_name = args[:datastream] || output_datastream_id(name)
-          encode_datastream(output_datastream_name, recipe, file_path: file_path)
+          output_file_name = args[:datastream] || output_file_id(name)
+          encode_file(output_file_name, recipe, file_path: file_path)
           File.unlink(file_path) unless file_path.nil?
         end
       end
 
-      def encode_datastream(dest_dsid, recipe, opts={})
+      def encode_file(destination_name, recipe, opts={})
         output_file = self.class.tmp_file('.jp2')
         if opts[:file_path]
           self.class.encode(opts[:file_path], recipe, output_file)
         else
-          source_datastream.to_tempfile do |f|
+          Hydra::Derivatives::TempfileService.create(source_file) do |f|
             self.class.encode(f.path, recipe, output_file)
           end
         end
         out_file = File.open(output_file, "rb")
-        out_datastream = output_datastream(dest_dsid)
-        out_datastream.content = out_file
-        out_datastream.mimeType = 'image/jp2'
-        #object.add_file_datastream(out_file.read, dsid: dest_dsid, mimeType: 'image/jp2')
+        # object.add_file(out_file.read, path: destination_name, mime_type: 'image/jp2')
+        output_file_service.call(object, out_file.read, destination_name, mime_type: 'image/jp2')
+
         File.unlink(output_file)
       end
       
@@ -75,7 +74,7 @@ module Hydra
 
       def self.kdu_compress_recipe(args, quality, long_dim)
         if args[:recipe].is_a? Symbol
-          recipe = [args[:recipe].to_s, quality].join('_')
+          recipe = [args[:recipe].to_s, quality].join('_').to_sym
           if Hydra::Derivatives.kdu_compress_recipes.has_key? recipe
             return Hydra::Derivatives.kdu_compress_recipes[recipe]
           else

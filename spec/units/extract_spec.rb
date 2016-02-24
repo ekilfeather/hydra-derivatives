@@ -1,12 +1,12 @@
 require "spec_helper"
 
-class ExtractThing < ActiveFedora::Datastream
+class ExtractThing < ActiveFedora::File
   include Hydra::Derivatives::ExtractMetadata
   attr_accessor :pid
 end
 
 describe Hydra::Derivatives::ExtractMetadata, :unless => $in_travis do
-  let(:subject) { ExtractThing.new }
+  let(:subject) { ExtractThing.new('http://example.com/foo') }
   let(:attachment) { File.open(File.expand_path('../../fixtures/world.png', __FILE__))}
 
   describe "Image Content" do
