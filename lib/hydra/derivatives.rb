@@ -1,6 +1,7 @@
 require 'active_fedora'
 require 'hydra/derivatives/railtie' if defined?(Rails)
 require 'deprecation'
+
 module Hydra
   module Derivatives
     extend ActiveSupport::Concern
@@ -19,15 +20,16 @@ module Hydra
     autoload :ShellBasedProcessor
     autoload :Jpeg2kImage
     autoload :Jpeg2kImageNli
+    autoload :RawImage
     autoload :Logger
     autoload :TempfileService
+    autoload :IoDecorator
 
     # services
     autoload :RetrieveSourceFileService,         'hydra/derivatives/services/retrieve_source_file_service'
     autoload :PersistOutputFileService,          'hydra/derivatives/services/persist_output_file_service'
     autoload :PersistBasicContainedOutputFileService, 'hydra/derivatives/services/persist_basic_contained_output_file_service'
     autoload :TempfileService,                   'hydra/derivatives/services/tempfile_service'
-
 
     # Raised if the timout elapses
     class TimeoutError < ::Timeout::Error; end

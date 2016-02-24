@@ -1,4 +1,5 @@
 require 'mini_magick'
+
 module Hydra
   module Derivatives
     class Image < Processor
@@ -54,12 +55,13 @@ module Hydra
       end
 
       def write_image(destination_name, format, xfrm)
-        stream = StringIO.new
-        xfrm.write(stream)
-        stream.rewind
-        mime_type = new_mime_type(format)
-        output_file_service.call(object, stream, destination_name, mime_type: mime_type)
+        output_io = Hydra::Derivatives::IoDecorator.new(StringIO.new) 
+        output_io.mime_type = new_mime_type(format)
 
+        xfrm.write(output_io)
+        output_io.rewind
+
+        output_file_service.call(object, output_io, destination_name)
       end
 
       # Override this method if you want a different transformer, or need to load the
