@@ -1,19 +1,8 @@
 language: ruby
+cache: bundler
+sudo: false
 rvm:
   - 2.
 env:
   global:
     - NOKOGIRI_USE_SYSTEM_LIBRARIES=true
-notifications:
-  email:
-    recipients:
-      - "ul-dlt-applications@lists.psu.edu"
-      - "michael@psu.edu"
-    on_success: "change"
-    on_failure: "always"
-  irc:
-    channels:
-      - "irc.freenode.org#scholarsphere"
-      - "irc.freenode.org#projecthydra"
-    template:
-      - "%{repository}//%{branch}@%{commit} by %{author}: %{message} - %{build_url}"
