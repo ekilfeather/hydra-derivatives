@@ -22,7 +22,7 @@ module Hydra::Derivatives::Processors
 
     protected
     def calculate_nli_recipe(args, colorspace, long_dim, size, bit_depth)
-      levels_arg = args.fetch(:levels, Hydra::Derivatives::Jpeg2kImage.level_count_for_size(long_dim))
+      levels_arg = args.fetch(:levels, self.class.level_count_for_size(long_dim))
       layer_count = args.fetch(:layers, 8)
       target_compression_ratio = args.fetch(:compression, 10)
       min_output_size_megabytes = args.fetch(:min_output_size, 3)

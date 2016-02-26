@@ -12,6 +12,7 @@ module Hydra::Derivatives
     autoload :FullText
     autoload :Image
     autoload :Jpeg2kImage
+    autoload :Jpeg2kImageNli
     autoload :RawImage
     autoload :ShellBasedProcessor
     autoload :Video
