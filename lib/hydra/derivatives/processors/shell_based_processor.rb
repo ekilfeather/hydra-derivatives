@@ -1,7 +1,7 @@
 # An abstract class for asyncronous jobs that transcode files using FFMpeg
 
 require 'tmpdir'
-require 'open3'
+require 'posix-spawn'
 
 module Hydra::Derivatives::Processors
   module ShellBasedProcessor
@@ -11,7 +11,6 @@ module Hydra::Derivatives::Processors
 
     included do
       class_attribute :timeout
-      extend Open3
     end
 
     def process
@@ -65,43 +64,15 @@ module Hydra::Derivatives::Processors
       end
 
       def execute_without_timeout(command, context)
-        exit_status = nil
-        err_str = ''
-        stdin, stdout, stderr, wait_thr = popen3(command)
-        context[:pid] = wait_thr[:pid]
-        stdin.close
-        stdout.close
-        files = [stderr]
-
-        until all_eof?(files) do
-          ready = IO.select(files, nil, nil, 60)
-
-          if ready
-            readable = ready[0]
-            readable.each do |f|
-              fileno = f.fileno
-
-              begin
-                data = f.read_nonblock(BLOCK_SIZE)
-
-                case fileno
-                  when stderr.fileno
-                    err_str << data
-                end
-              rescue EOFError
-                Rails.logger "Caught an eof error in ShellBasedProcessor"
-                # No big deal.
-              end
-            end
-          end
-        end
-        exit_status = wait_thr.value
-
-        raise "Unable to execute command \"#{command}\". Exit code: #{exit_status}\nError message: #{err_str}" unless exit_status.success?
+        stdout, stderr, status = execute_posix_spawn(*command)
+        raise "Unable to execute command \"#{command}\"\n#{stderr}" unless status.exitstatus  == 0
       end
 
-      def all_eof?(files)
-        files.find { |f| !f.eof }.nil?
+      def execute_posix_spawn(*command)
+        pid, stdin, stdout, stderr = POSIX::Spawn.popen4(*command)
+        Process.waitpid(pid)
+
+        [stdout.read, stderr.read, $?]
       end
     end
   end
