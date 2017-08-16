@@ -1,7 +1,7 @@
 # An abstract class for asyncronous jobs that transcode files using FFMpeg
 
 require 'tmpdir'
-require 'posix-spawn'
+require 'open3'
 
 module Hydra::Derivatives::Processors
   module ShellBasedProcessor
@@ -11,24 +11,23 @@ module Hydra::Derivatives::Processors
 
     included do
       class_attribute :timeout
+      extend Open3
     end
 
     def process
-      name = directives.fetch(:label)
       format = directives[:format]
       raise ArgumentError, "You must provide the :format you want to transcode into. You provided #{directives}" unless format
-      # TODO if the source is in the correct format, we could just copy it and skip transcoding.
+      # TODO: if the source is in the correct format, we could just copy it and skip transcoding.
       encode_file(format, options_for(format))
     end
 
     # override this method in subclass if you want to provide specific options.
     # returns a hash of options that the specific processors use
-    def options_for(format)
+    def options_for(_format)
       {}
     end
 
     def encode_file(file_suffix, options)
-      out_file = nil
       temp_file_name = output_file(file_suffix)
       self.class.encode(source_path, options, temp_file_name)
       output_file_service.call(File.open(temp_file_name, 'rb'), directives)
@@ -36,11 +35,10 @@ module Hydra::Derivatives::Processors
     end
 
     def output_file(file_suffix)
-      Dir::Tmpname.create(['sufia', ".#{file_suffix}"], Hydra::Derivatives.temp_file_base){}
+      Dir::Tmpname.create(['sufia', ".#{file_suffix}"], Hydra::Derivatives.temp_file_base) {}
     end
 
     module ClassMethods
-
       def execute(command)
         context = {}
         if timeout
@@ -51,28 +49,51 @@ module Hydra::Derivatives::Processors
       end
 
       def execute_with_timeout(timeout, command, context)
-        begin
-          status = Timeout::timeout(timeout) do
-            execute_without_timeout(command, context)
-          end
-        rescue Timeout::Error => ex
-          pid = context[:pid]
-          Process.kill("KILL", pid)
-          raise Hydra::Derivatives::TimeoutError, "Unable to execute command \"#{command}\"\nThe command took longer than #{timeout} seconds to execute"
+        Timeout.timeout(timeout) do
+          execute_without_timeout(command, context)
         end
-
+      rescue Timeout::Error
+        pid = context[:pid]
+        Process.kill("KILL", pid)
+        raise Hydra::Derivatives::TimeoutError, "Unable to execute command \"#{command}\"\nThe command took longer than #{timeout} seconds to execute"
       end
 
       def execute_without_timeout(command, context)
-        stdout, stderr, status = execute_posix_spawn(*command)
-        raise "Unable to execute command \"#{command}\"\n#{stderr}" unless status.exitstatus  == 0
+        err_str = ''
+        stdin, stdout, stderr, wait_thr = popen3(command)
+        context[:pid] = wait_thr[:pid]
+        stdin.close
+        stdout.close
+        files = [stderr]
+
+        until all_eof?(files)
+          ready = IO.select(files, nil, nil, 60)
+
+          next unless ready
+          readable = ready[0]
+          readable.each do |f|
+            fileno = f.fileno
+
+            begin
+              data = f.read_nonblock(BLOCK_SIZE)
+
+              case fileno
+              when stderr.fileno
+                err_str << data
+              end
+            rescue EOFError
+              Rails.logger "Caught an eof error in ShellBasedProcessor"
+              # No big deal.
+            end
+          end
+        end
+        exit_status = wait_thr.value
+
+        raise "Unable to execute command \"#{command}\". Exit code: #{exit_status}\nError message: #{err_str}" unless exit_status.success?
       end
 
-      def execute_posix_spawn(*command)
-        pid, stdin, stdout, stderr = POSIX::Spawn.popen4(*command)
-        Process.waitpid(pid)
-
-        [stdout.read, stderr.read, $?]
+      def all_eof?(files)
+        files.find { |f| !f.eof }.nil?
       end
     end
   end
